@@ -18,7 +18,7 @@ module Haml
     COMMENT         = ?/
 
     # Designates an XHTML doctype or script that is never HTML-escaped.
-    DOCTYPE         = ?!
+    DOCTYPE_OR_UNESCAPE = ?!
 
     # Designates script, the result of which is output.
     SCRIPT          = ?=
@@ -51,7 +51,7 @@ module Haml
       DIV_CLASS,
       DIV_ID,
       COMMENT,
-      DOCTYPE,
+      DOCTYPE_OR_UNESCAPE,
       SCRIPT,
       SANITIZE,
       FLAT_SCRIPT,
@@ -194,12 +194,16 @@ END
       @index = index + 1
 
       case text[0]
-      when DIV_CLASS, DIV_ID; render_div(text)
+      when DIV_CLASS, DIV_ID
+        return push_interpolate(text) if text[0..1] == '#{' and contains_interpolation?(text)
+        render_div(text)
       when ELEMENT; render_tag(text)
       when COMMENT; render_comment(text[1..-1].strip)
       when SANITIZE
         return push_script(unescape_interpolation(text[3..-1].strip), false, false, false, true) if text[1..2] == "=="
         return push_script(text[2..-1].strip, false, false, false, true) if text[1] == SCRIPT
+        return push_script(unescape_interpolation(text[1..-1].strip), false, false, false, true) if text[1] == ?\s
+        return push_interpolate(text) if contains_interpolation?(text)
         push_plain text
       when SCRIPT
         return push_script(unescape_interpolation(text[2..-1].strip), false) if text[1] == SCRIPT
@@ -216,7 +220,7 @@ You don't need to use "- end" in Haml. Use indentation instead:
 - else
   Not foo.
 END
-
+#'
         push_silent(text[1..-1], true)
         newline_now
 
@@ -225,13 +229,19 @@ END
         push_and_tabulate([:script]) if block || case_stmt
         push_and_tabulate(:nil)      if block && case_stmt
       when FILTER; start_filtered(text[1..-1].downcase)
-      when DOCTYPE
+      when DOCTYPE_OR_UNESCAPE
         return render_doctype(text) if text[0...3] == '!!!'
         return push_script(unescape_interpolation(text[3..-1].strip), false) if text[1..2] == "=="
         return push_script(text[2..-1].strip, false) if text[1] == SCRIPT
+        return push_script(unescape_interpolation(text[1..-1].strip), false) if text[1] == ?\s
+        return push_interpolate(text) if contains_interpolation?(text)
         push_plain text
-      when ESCAPE; push_plain text[1..-1]
-      else push_plain text
+      when ESCAPE
+        return push_interpolate(text[1..-1]) if contains_interpolation?(text)
+        push_plain text[1..-1]
+      else
+        return push_interpolate(text) if contains_interpolation?(text)
+        push_plain text
       end
     end
 
@@ -264,6 +274,10 @@ END
 
     def push_text(text, tab_change = 0)
       push_merged_text("#{text}\n", tab_change)
+    end
+
+    def push_interpolate(text)
+      push_script(unescape_interpolation(text.strip), false)
     end
 
     def flush_merged_text
@@ -567,6 +581,15 @@ END
         if value[0] == ?=
           parse = true
           value = (value[1] == ?= ? unescape_interpolation(value[2..-1].strip) : value[1..-1].strip)
+        elsif contains_interpolation?(value)
+          parse = true
+          value = unescape_interpolation(value.strip)
+        end
+      else
+        if contains_interpolation?(value)
+          # switch to parse if interpolation is detected
+          parse = true
+          value = unescape_interpolation(value.strip)
         end
       end
 
@@ -787,7 +810,13 @@ END
     end
 
     def contains_interpolation?(str)
-      str.include?('#{')
+      interpolation_index = str.index('#{')
+      if interpolation_index
+        # checks the rest of the line for a closing brace
+        return !str.index("}", interpolation_index).nil?
+      else
+        return false
+      end
     end
 
     def unescape_interpolation(str)

@@ -55,6 +55,7 @@ class EngineTest < Test::Unit::TestCase
     "foo\n\n\n  bar" => ["Illegal nesting: nesting within plain text is illegal.", 4],
     "%p/\n\n  bar" => ["Illegal nesting: nesting within a self-closing tag is illegal.", 3],
     "%p foo\n\n  bar" => ["Illegal nesting: content can't be both given on the same line as %p and nested within it.", 3],
+    "%p \#{'hello''}\n\n  bar" => ["Illegal nesting: content can't be both given on the same line as %p and nested within it.", 3],
     "/ foo\n\n  bar" => ["Illegal nesting: nesting within a tag that already has content is illegal.", 3],
     "!!!\n\n  bar" => ["Illegal nesting: nesting within a header command is illegal.", 3],
     "foo\n:ruby\n  1\n  2\n  3\n- raise 'foo'" => ["foo", 6],
@@ -137,6 +138,62 @@ class EngineTest < Test::Unit::TestCase
   def test_double_equals_in_the_middle_of_a_string
     assert_equal("\"title 'Title'. \"\n",
                  render("== \"title '\#{\"Title\"}'. \""))
+  end
+
+  def test_implicit_interpolation
+    assert_equal("Hello World\n", render('Hello #{who}', :locals => {:who => 'World'}))
+  end
+
+  def test_implicit_interpolation_without_end
+    assert_equal("Hello \#{who\n", render('Hello #{who', :locals => {:who => 'World'}))
+    assert_equal("<p>Hello \#{who</p>\n", render('%p Hello #{who', :locals => {:who => 'World'}))
+  end
+
+  def test_implicit_interpolation_at_beginning
+    assert_equal("World\n", render('#{who}', :locals => {:who => 'World'}))
+  end
+
+  def test_escaped_hash
+    assert_equal("Hello \#{who}\n", render('Hello \\#{who}'))
+  end
+
+  def test_implicit_interpolation_with_tag
+    assert_equal("<p>Hello World</p>\n", render('%p Hello #{who}', :locals => {:who => 'World'}))
+    assert_equal(<<HTML, render(<<HAML, :locals => {:who => 'World'}))
+<p>
+  Hello World
+</p>
+HTML
+%p
+  == Hello \#{who}
+HAML
+  end
+
+  def test_implicit_interpolation_at_beginning_with_tag
+    assert_equal("<p>World</p>\n", render('%p #{who}', :locals => {:who => 'World'}))
+    assert_equal(<<HTML, render(<<HAML, :locals => {:who => 'World'}))
+<p>
+  World
+</p>
+HTML
+%p
+  \#{who}
+HAML
+  end
+
+  def test_explicit_interpolation
+    assert_equal("<p>Hello World</p>\n", render('%p== Hello #{who}', :locals => {:who => 'World'}))
+  end
+
+  def test_escaped_actions
+    assert_equal("- Hello World\n", render('\\- Hello World'))
+    assert_equal("= Hello World\n", render('\\= Hello World'))
+    assert_equal("~ Hello World\n", render('\\~ Hello World'))
+    assert_equal("== Hello World\n", render('\\== Hello World'))
+  end
+
+  def test_escaped_actions_with_implicit_interpolation
+    assert_equal("= Hello World\n", render('\\= Hello #{who}', :locals => {:who => 'World'}))
   end
 
   def test_nil_tag_value_should_render_as_empty
@@ -223,7 +280,7 @@ RESULT
 %p
   %q><= "Foo\\nBar"
 SOURCE
-  end
+  end #=>
 
   # Regression tests
 
@@ -279,14 +336,97 @@ bar
 HAML
   end
 
-  # HTML escaping tests
-
   def test_ampersand_equals_should_escape
     assert_equal("<p>\n  foo &amp; bar\n</p>\n", render("%p\n  &= 'foo & bar'", :escape_html => false))
   end
 
+  def test_ampersand_with_implicit_interpolation
+    assert_equal(<<HTML, render(<<HAML, :locals => {:complete => "bar"}, :escape_html => false))
+<p>
+  foo &amp; bar
+</p>
+HTML
+%p
+  & foo & \#{complete}
+HAML
+  end
+
+  def test_ampersand_fallback
+    assert_equal(<<HTML, render(<<HAML, :escape_html => false))
+<p>
+  &amp;
+</p>
+HTML
+%p
+  &amp;
+HAML
+  end
+
+  def test_ampersand_fallback_with_implicit_interpolation
+    assert_equal(<<HTML, render(<<HAML, :locals => {:complete => "bar"}, :escape_html => false))
+<p>
+  &amp; foo bar
+</p>
+HTML
+%p
+  &amp; foo \#{complete}
+HAML
+  end
+
+  def test_bang_with_implicit_interpolation
+    assert_equal(<<HTML, render(<<HAML, :locals => {:complete => "bar"}, :escape_html => true))
+<p>
+  foo & bar
+</p>
+HTML
+%p
+  ! foo & \#{complete}
+HAML
+  end
+
+  def test_bang_fallback
+    assert_equal(<<HTML, render(<<HAML, :locals => {:complete => "bar"}, :escape_html => false))
+<p>
+  !bang
+</p>
+HTML
+%p
+  !bang
+HAML
+  end
+
+  def test_bang_fallback_with_implicit_interpolation
+    assert_equal(<<HTML, render(<<HAML, :locals => {:complete => "bar"}, :escape_html => false))
+<p>
+  !bang foo bar
+</p>
+HTML
+%p
+  !bang foo \#{complete}
+HAML
+  end
+
+  def test_escape_with_implicit_interpolation
+    assert_equal(<<HTML, render(<<HAML, :locals => {:complete => "bar"}))
+<p>
+  = foo bar
+</p>
+HTML
+%p
+  \\= foo \#{complete}
+HAML
+  end
+
   def test_ampersand_equals_inline_should_escape
     assert_equal("<p>foo &amp; bar</p>\n", render("%p&= 'foo & bar'", :escape_html => false))
+  end
+
+  def test_ampersand_interpolation_inline_should_escape
+    assert_equal("<p>foo &amp; bar</p>\n", render("%p&== foo & \#{complete}", :locals => {:complete => "bar"}, :escape_html => false))
+  end
+
+  def test_ampersand_implicit_interpolation_inline_should_escape
+    assert_equal("<p>foo bar</p>\n", render("%p& foo \#{complete}", :locals => {:complete => "bar"}, :escape_html => false))
   end
 
   def test_ampersand_equals_should_escape_before_preserve
@@ -300,7 +440,7 @@ HAML
   def test_bang_equals_inline_should_not_escape
     assert_equal("<p>foo & bar</p>\n", render("%p!= 'foo & bar'", :escape_html => true))
   end
-  
+
   def test_static_attributes_should_be_escaped
     assert_equal("<img class='atlantis' style='ugly&amp;stupid' />\n",
                  render("%img.atlantis{:style => 'ugly&stupid'}"))
