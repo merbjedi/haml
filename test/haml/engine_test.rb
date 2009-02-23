@@ -115,8 +115,22 @@ class EngineTest < Test::Unit::TestCase
                  render(".stripped    This should have no spaces in front of it").chomp)
   end
 
+  def test_shorthand_one_liners
+    assert_equal("<p>Hello World</p>\n", render("%p Hello World"))
+    assert_equal("<p>Hello World</p>\n", render("%p= 'Hello World'"))
+    assert_equal("<div class='welcome'>Hello World</div>\n", render(".welcome Hello World"))
+    assert_equal("<div class='welcome'>Hello World</div>\n", render(".welcome= 'Hello World'"))
+    assert_equal("<div id='welcome'>Hello World</div>\n", render("#welcome Hello World"))
+    assert_equal("<div id='welcome'>Hello World</div>\n", render("#welcome= 'Hello World'"))
+  end
+
   def test_one_liner_should_be_one_line
     assert_equal("<p>Hello</p>", render('%p Hello').chomp)
+  end
+
+  def test_one_liner_eval_with_interpolation
+    assert_equal("<div class='welcome'>Hello WORLD</div>", render(%{.welcome= "Hello \#{'WORLD'}"}).chomp)
+    assert_equal("<div id='welcome'>Hello WORLD</div>", render(%{#welcome= "Hello \#{'WORLD'}"}).chomp)
   end
 
   def test_one_liner_with_newline_shouldnt_be_one_line
