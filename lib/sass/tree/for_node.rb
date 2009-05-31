@@ -2,12 +2,12 @@ require 'sass/tree/node'
 
 module Sass::Tree
   class ForNode < Node
-    def initialize(var, from, to, exclusive, options)
+    def initialize(var, from, to, exclusive)
       @var = var
       @from = from
       @to = to
       @exclusive = exclusive
-      super(options)
+      super()
     end
 
     protected
@@ -18,8 +18,8 @@ module Sass::Tree
       range = Range.new(from, to, @exclusive)
 
       children = []
+      environment = Sass::Environment.new(environment)
       range.each do |i|
-        environment = Sass::Environment.new(environment)
         environment.set_local_var(@var, Sass::Script::Number.new(i))
         children += perform_children(environment)
       end

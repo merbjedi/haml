@@ -2,17 +2,18 @@ require 'sass/tree/node'
 
 module Sass::Tree
   class WhileNode < Node
-    def initialize(expr, options)
+    def initialize(expr)
       @expr = expr
-      super(options)
+      super()
     end
 
     private
 
     def _perform(environment)
       children = []
+      new_environment = Sass::Environment.new(environment)
       while @expr.perform(environment).to_bool
-        children += perform_children(Sass::Environment.new(environment))
+        children += perform_children(new_environment)
       end
       children
     end

@@ -19,7 +19,7 @@ module Sass
 
     class RuleNode
       def to_sass(tabs, opts = {})
-        str = "\n#{'  ' * tabs}#{rule}#{children.any? { |c| c.is_a? AttrNode } ? "\n" : ''}"
+        str = "\n#{'  ' * tabs}#{rules.first}#{children.any? { |c| c.is_a? AttrNode } ? "\n" : ''}"
 
         children.each do |child|
           str << "#{child.to_sass(tabs + 1, opts)}"
@@ -39,61 +39,6 @@ module Sass
       def to_sass(tabs, opts = {})
         "#{'  ' * tabs}#{value}#{children.map {|c| c.to_sass(tabs + 1, opts)}}\n"
       end
-    end
-  end
-
-  # This class is based on the Ruby 1.9 ordered hashes.
-  # It keeps the semantics and most of the efficiency of normal hashes
-  # while also keeping track of the order in which elements were set.
-  class OrderedHash
-    Node = Struct.new(:key, :value, :next, :prev)
-    include Enumerable
-
-    def initialize
-      @hash = {}
-    end
-
-    def initialize_copy(other)
-      @hash = other.instance_variable_get('@hash').clone
-    end
-
-    def [](key)
-      @hash[key] && @hash[key].value
-    end
-
-    def []=(key, value)
-      node = Node.new(key, value)
-
-      if old = @hash[key]
-        if old.prev
-          old.prev.next = old.next
-        else # old is @first and @last
-          @first = @last = nil
-        end
-      end
-
-      if @first.nil?
-        @first = @last = node
-      else
-        node.prev = @last
-        @last.next = node
-        @last = node
-      end
-
-      @hash[key] = node
-      value
-    end
-
-    def each
-      return unless @first
-      yield [@first.key, @first.value]
-      node = @first
-      yield [node.key, node.value] while node = node.next
-      self
-    end
-
-    def values
-      self.map { |k, v| v }
     end
   end
 
@@ -130,7 +75,7 @@ module Sass
     private
 
     def build_tree
-      root = Tree::Node.new({})
+      root = Tree::Node.new
       whitespace
       rules              root
       expand_commas      root
@@ -154,7 +99,7 @@ module Sass
       directive = rule[0] == ?@
 
       if directive
-        node = Tree::DirectiveNode.new(rule, {})
+        node = Tree::DirectiveNode.new(rule)
         return node if @template.scan(/;/)
 
         assert_match /\{/
@@ -165,7 +110,7 @@ module Sass
       end
 
       assert_match /\{/
-      node = Tree::RuleNode.new(rule, {})
+      node = Tree::RuleNode.new(rule)
       attributes(node)
       return node
     end
@@ -183,7 +128,7 @@ module Sass
         end
 
         assert_match /(;|(?=\}))/
-        rule << Tree::AttrNode.new(name, value, {})
+        rule << Tree::AttrNode.new(name, value, nil)
       end
 
       assert_match /\}/
@@ -229,9 +174,9 @@ module Sass
     # but it's necessary to get nesting to work properly.
     def expand_commas(root)
       root.children.map! do |child|
-        next child unless Tree::RuleNode === child && child.rule.include?(',')
-        child.rule.split(',').map do |rule|
-          node = Tree::RuleNode.new(rule.strip, {})
+        next child unless Tree::RuleNode === child && child.rules.first.include?(',')
+        child.rules.first.split(',').map do |rule|
+          node = Tree::RuleNode.new(rule.strip)
           node.children = child.children
           node
         end
@@ -273,21 +218,25 @@ module Sass
     #       color: blue
     #
     def parent_ref_rules(root)
-      rules = OrderedHash.new
+      current_rule = nil
       root.children.select { |c| Tree::RuleNode === c }.each do |child|
         root.children.delete child
-        first, rest = child.rule.scan(/^(&?(?: .|[^ ])[^.#: \[]*)([.#: \[].*)?$/).first
-        rules[first] ||= Tree::RuleNode.new(first, {})
+        first, rest = child.rules.first.scan(/^(&?(?: .|[^ ])[^.#: \[]*)([.#: \[].*)?$/).first
+
+        if current_rule.nil? || current_rule.rules.first != first
+          current_rule = Tree::RuleNode.new(first)
+          root << current_rule
+        end
+
         if rest
-          child.rule = "&" + rest
-          rules[first] << child
+          child.rules = ["&" + rest]
+          current_rule << child
         else
-          rules[first].children += child.children
+          current_rule.children += child.children
         end
       end
 
-      rules.values.each { |v| parent_ref_rules(v) }
-      root.children += rules.values
+      root.children.each { |v| parent_ref_rules(v) }
     end
 
     # Remove useless parent refs so that
@@ -305,7 +254,7 @@ module Sass
     def remove_parent_refs(root)
       root.children.each do |child|
         if child.is_a?(Tree::RuleNode)
-          child.rule.gsub! /^& +/, ''
+          child.rules.first.gsub! /^& +/, ''
           remove_parent_refs child
         end
       end
@@ -342,10 +291,10 @@ module Sass
       while rule.children.size == 1 && rule.children.first.is_a?(Tree::RuleNode)
         child = rule.children.first
 
-        if child.rule[0] == ?&
-          rule.rule = child.rule.gsub /^&/, rule.rule
+        if child.rules.first[0] == ?&
+          rule.rules = [child.rules.first.gsub(/^&/, rule.rules.first)]
         else
-          rule.rule = "#{rule.rule} #{child.rule}"
+          rule.rules = ["#{rule.rules.first} #{child.rules.first}"]
         end
 
         rule.children = child.children
@@ -374,7 +323,7 @@ module Sass
         next child unless child.is_a?(Tree::RuleNode)
 
         if prev_rule && prev_rule.children == child.children
-          prev_rule.rule << ", #{child.rule}"
+          prev_rule.rules.first << ", #{child.rules.first}"
           next nil
         end
 
